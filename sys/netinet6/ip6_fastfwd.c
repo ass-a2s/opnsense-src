@@ -87,7 +87,6 @@ ip6_tryforward(struct mbuf *m)
 {
 	struct sockaddr_in6 dst;
 	struct nhop6_basic nh;
-	struct m_tag *fwd_tag;
 	struct ip6_hdr *ip6;
 	struct ifnet *rcvif;
 	uint32_t plen;
@@ -97,7 +96,8 @@ ip6_tryforward(struct mbuf *m)
 	 * Fallback conditions to ip6_input for slow path processing.
 	 */
 	ip6 = mtod(m, struct ip6_hdr *);
-	if (ip6->ip6_nxt == IPPROTO_HOPOPTS ||
+	if ((m->m_flags & (M_BCAST | M_MCAST)) != 0 ||
+	    ip6->ip6_nxt == IPPROTO_HOPOPTS ||
 	    IN6_IS_ADDR_MULTICAST(&ip6->ip6_dst) ||
 	    IN6_IS_ADDR_LINKLOCAL(&ip6->ip6_dst) ||
 	    IN6_IS_ADDR_LINKLOCAL(&ip6->ip6_src) ||
@@ -157,7 +157,7 @@ ip6_tryforward(struct mbuf *m)
 	 */
 	if (!PFIL_HOOKED(&V_inet6_pfil_hook))
 		goto passin;
-	if (pfil_run_hooks(&V_inet6_pfil_hook, &m, rcvif, PFIL_IN,
+	if (pfil_run_hooks(&V_inet6_pfil_hook, &m, rcvif, PFIL_IN, 0,
 	    NULL) != 0 || m == NULL)
 		goto dropin;
 	/*
@@ -173,14 +173,16 @@ ip6_tryforward(struct mbuf *m)
 		return (m);
 
 	ip6 = mtod(m, struct ip6_hdr *);
-	if ((m->m_flags & M_IP6_NEXTHOP) &&
-	    (fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL)) != NULL) {
+	if (IP6_HAS_NEXTHOP(m)) {
 		/*
 		 * Now we will find route to forwarded by pfil destination.
 		 */
-		bcopy((fwd_tag + 1), &dst, sizeof(dst));
-		m->m_flags &= ~M_IP6_NEXTHOP;
-		m_tag_delete(m, fwd_tag);
+		struct sockaddr_in6 tmp;
+		if (ip6_get_fwdtag(m, &tmp, NULL)) {
+			return (NULL);
+		}
+		dst.sin6_addr = tmp.sin6_addr;
+		ip6_flush_fwdtag(m);
 	} else {
 		/* Update dst since pfil could change it */
 		dst.sin6_addr = ip6->ip6_dst;
@@ -194,6 +196,23 @@ passin:
 		in6_ifstat_inc(rcvif, ifs6_in_noroute);
 		goto dropin;
 	}
+	if (!PFIL_HOOKED(&V_inet6_pfil_hook)) {
+		if (m->m_pkthdr.len > nh.nh_mtu) {
+			in6_ifstat_inc(nh.nh_ifp, ifs6_in_toobig);
+			icmp6_error(m, ICMP6_PACKET_TOO_BIG, 0, nh.nh_mtu);
+			m = NULL;
+			goto dropout;
+		}
+		goto passout;
+	}
+
+	/*
+	 * Outgoing packet firewall processing.
+	 */
+	if (pfil_run_hooks(&V_inet6_pfil_hook, &m, nh.nh_ifp, PFIL_OUT,
+	    PFIL_FWD, NULL) != 0 || m == NULL)
+		goto dropout;
+
 	/*
 	 * We used slow path processing for packets with scoped addresses.
 	 * So, scope checks aren't needed here.
@@ -205,14 +224,6 @@ passin:
 		goto dropout;
 	}
 
-	/*
-	 * Outgoing packet firewall processing.
-	 */
-	if (!PFIL_HOOKED(&V_inet6_pfil_hook))
-		goto passout;
-	if (pfil_run_hooks(&V_inet6_pfil_hook, &m, nh.nh_ifp, PFIL_OUT,
-	    NULL) != 0 || m == NULL)
-		goto dropout;
 	/*
 	 * If packet filter sets the M_FASTFWD_OURS flag, this means
 	 * that new destination or next hop is our local address.
@@ -232,17 +243,15 @@ passin:
 	 * Again. A packet filter could change the destination address.
 	 */
 	ip6 = mtod(m, struct ip6_hdr *);
-	if (m->m_flags & M_IP6_NEXTHOP)
-		fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL);
-	else
-		fwd_tag = NULL;
-
-	if (fwd_tag != NULL ||
+	if (IP6_HAS_NEXTHOP(m) ||
 	    !IN6_ARE_ADDR_EQUAL(&dst.sin6_addr, &ip6->ip6_dst)) {
-		if (fwd_tag != NULL) {
-			bcopy((fwd_tag + 1), &dst, sizeof(dst));
-			m->m_flags &= ~M_IP6_NEXTHOP;
-			m_tag_delete(m, fwd_tag);
+		if (IP6_HAS_NEXTHOP(m)) {
+			struct sockaddr_in6 tmp;
+			if (ip6_get_fwdtag(m, &tmp, NULL)) {
+				return (NULL);
+			}
+			dst.sin6_addr = tmp.sin6_addr;
+			ip6_flush_fwdtag(m);
 		} else
 			dst.sin6_addr = ip6->ip6_dst;
 		/*

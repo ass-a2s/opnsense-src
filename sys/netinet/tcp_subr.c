@@ -655,6 +655,10 @@ tcp_init(void)
 	V_sack_hole_zone = uma_zcreate("sackhole", sizeof(struct sackhole),
 	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
 
+#ifdef TCP_RFC7413
+	tcp_fastopen_init();
+#endif
+
 	/* Skip initialization of globals for non-default instances. */
 	if (!IS_DEFAULT_VNET(curvnet))
 		return;
@@ -707,10 +711,6 @@ tcp_init(void)
 		EVENTHANDLER_PRI_ANY);
 #ifdef TCPPCAP
 	tcp_pcap_init();
-#endif
-
-#ifdef TCP_RFC7413
-	tcp_fastopen_init();
 #endif
 }
 
@@ -1133,16 +1133,20 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 	if (flags & TH_RST)
 		TCP_PROBE5(accept__refused, NULL, NULL, m, tp, nth);
 
-	TCP_PROBE5(send, NULL, tp, m, tp, nth);
 #ifdef INET6
-	if (isipv6)
-		(void) ip6_output(m, NULL, NULL, 0, NULL, NULL, inp);
+	if (isipv6) {
+		TCP_PROBE5(send, NULL, tp, ip6, tp, nth);
+		(void)ip6_output(m, NULL, NULL, 0, NULL, NULL, inp);
+	}
 #endif /* INET6 */
 #if defined(INET) && defined(INET6)
 	else
 #endif
 #ifdef INET
-		(void) ip_output(m, NULL, NULL, 0, NULL, inp);
+	{
+		TCP_PROBE5(send, NULL, tp, ip, tp, nth);
+		(void)ip_output(m, NULL, NULL, 0, NULL, inp);
+	}
 #endif
 }
 

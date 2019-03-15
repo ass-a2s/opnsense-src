@@ -26,7 +26,8 @@
 /* ----------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------- */
-#if defined(OPENSSL) && OPENSSL_VERSION_NUMBER < 0x10100000L
+#if (defined(OPENSSL) && OPENSSL_VERSION_NUMBER < 0x10100000L) \
+    || defined(LIBRESSL_VERSION_NUMBER)
 /* ----------------------------------------------------------------- */
 
 #include "libssl_compat.h"
@@ -74,7 +75,10 @@ sslshimBN_GENCB_free(
 EVP_MD_CTX*
 sslshim_EVP_MD_CTX_new(void)
 {
-	return calloc(1, sizeof(EVP_MD_CTX));
+	EVP_MD_CTX *	ctx;
+	if (NULL != (ctx = calloc(1, sizeof(EVP_MD_CTX))))
+		EVP_MD_CTX_init(ctx);
+	return ctx;
 }
 
 void

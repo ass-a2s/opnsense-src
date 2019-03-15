@@ -1,0 +1,2 @@
+.\" $FreeBSD$
+Enable randomizing the load order of shared objects.

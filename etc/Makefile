@@ -7,8 +7,6 @@ FILESGROUPS=	FILES
 
 # No need as it is empty and just causes rebuilds since this file does so much.
 UPDATE_DEPENDFILE=	no
-SUBDIR=	\
-	newsyslog.conf.d
 
 .if ${MK_SENDMAIL} != "no"
 SUBDIR+=sendmail
@@ -98,6 +96,10 @@ BIN1+= freebsd-update.conf
 BIN1+= ftpusers
 .endif
 
+.if ${MK_HBSD_UPDATE} != "no"
+BIN1+= hbsd-update.conf
+.endif
+
 .if ${MK_INETD} != "no"
 BIN1+= inetd.conf
 .endif
@@ -153,20 +155,6 @@ BIN1+= regdomain.xml
 
 # -rwxr-xr-x root:wheel, for the new cron root:wheel
 BIN2=	netstart pccard_ether rc.suspend rc.resume
-
-MTREE=	BSD.debug.dist BSD.include.dist BSD.root.dist BSD.usr.dist BSD.var.dist
-.if ${MK_LIB32} != "no"
-MTREE+=	BSD.lib32.dist
-.endif
-.if ${MK_LIBSOFT} != "no"
-MTREE+=	BSD.libsoft.dist
-.endif
-.if ${MK_TESTS} != "no"
-MTREE+=	BSD.tests.dist
-.endif
-.if ${MK_SENDMAIL} != "no"
-MTREE+=	BSD.sendmail.dist
-.endif
 
 PPPCNF=	ppp.conf
 
@@ -255,6 +243,8 @@ distribution:
 	${_+_}cd ${.CURDIR}/defaults; ${MAKE} install
 	${_+_}cd ${.CURDIR}/devd; ${MAKE} install
 	${_+_}cd ${.CURDIR}/gss; ${MAKE} install
+	${_+_}cd ${.CURDIR}/mtree; ${MAKE} install
+	${_+_}cd ${.CURDIR}/newsyslog.conf.d; ${MAKE} install
 .if ${MK_NTP} != "no"
 	${_+_}cd ${.CURDIR}/ntp; ${MAKE} install
 .endif
@@ -309,8 +299,6 @@ distribution:
 	    rm -f ${DESTDIR}/.cshrc; \
 	    ln ${DESTDIR}/root/.cshrc ${DESTDIR}/.cshrc
 .endif
-	cd ${.CURDIR}/mtree; ${INSTALL} -o ${BINOWN} -g ${BINGRP} -m 444 \
-	    ${MTREE} ${DESTDIR}/etc/mtree
 .if ${MK_MAIL} != "no"
 	cd ${.CURDIR}/mail; ${INSTALL} -o ${BINOWN} -g ${BINGRP} -m 644 \
 	    ${ETCMAIL} ${DESTDIR}/etc/mail
@@ -342,19 +330,6 @@ distribution:
 .endif
 
 MTREE_CMD?=	mtree
-
-.if ${MK_INSTALL_AS_USER} == "yes" && ${_uid} != 0
-MTREE_FILTER= sed -e 's,\([gu]\)name=,\1id=,g' \
-	-e 's,\(uid=\)[^ ]* ,\1${_uid} ,' \
-	-e 's,\(gid=\)[^ ]* ,\1${_gid} ,' \
-	-e 's,\(uid=\)[^ ]*$$,\1${_uid},' \
-	-e 's,\(gid=\)[^ ]*$$,\1${_gid},' 
-.else
-MTREE_FILTER= cat
-.if !defined(NO_FSCHG)
-MTREE_FSCHG=	-i
-.endif
-.endif
 
 MTREES=		mtree/BSD.root.dist		/		\
 		mtree/BSD.var.dist		/var		\
@@ -419,10 +394,10 @@ distrib-dirs: ${MTREES:N/*} distrib-cleanup .PHONY
 		d=${DISTBASE}$$d; \
 		shift; \
 		test -d ${DESTDIR}/$$d || mkdir -p ${DESTDIR}/$$d; \
-		${ECHO} "${MTREE_CMD:N-W} -C -f $$m -K uname,gname | " \
+		${ECHO} "${MTREE_CMD:N-W} -C -f $$m -K all | " \
 		    "sed s#^\.#.$$d# | ${METALOG.add}" ; \
 		${MTREE_FILTER} $$m | \
-		${MTREE_CMD:N-W} -C -K uname,gname | sed s#^\.#.$$d# | \
+		${MTREE_CMD:N-W} -C -K all | sed s#^\.#.$$d# | \
 		    ${METALOG.add} ; \
 	done; true
 .endif
@@ -471,3 +446,16 @@ etc-examples: etc-examples-install
 	    DESTDIR=${DESTDIR}${SHAREDIR}/examples
 
 .include <bsd.prog.mk>
+
+.if ${MK_INSTALL_AS_USER} == "yes" && ${_uid} != 0
+MTREE_FILTER= sed -e 's,\([gu]\)name=,\1id=,g' \
+	-e 's,\(uid=\)[^ ]* ,\1${_uid} ,' \
+	-e 's,\(gid=\)[^ ]* ,\1${_gid} ,' \
+	-e 's,\(uid=\)[^ ]*$$,\1${_uid},' \
+	-e 's,\(gid=\)[^ ]*$$,\1${_gid},'
+.else
+MTREE_FILTER= cat
+.if !defined(NO_FSCHG)
+MTREE_FSCHG=	-i
+.endif
+.endif

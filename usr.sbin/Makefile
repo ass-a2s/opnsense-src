@@ -73,6 +73,7 @@ SUBDIR=	adduser \
 	rpc.statd \
 	rpc.umntall \
 	rtprio \
+	rwhod \
 	service \
 	services_mkdb \
 	sesutil \
@@ -123,8 +124,9 @@ SUBDIR.${MK_BSDINSTALL}+=	bsdinstall
 SUBDIR.${MK_BSNMP}+=	bsnmpd
 SUBDIR.${MK_CTM}+=	ctm
 SUBDIR.${MK_CXGBETOOL}+=	cxgbetool
+SUBDIR.${MK_MLX5TOOL}+=	mlx5tool
 SUBDIR.${MK_DIALOG}+=	bsdconfig
-SUBDIR.${MK_EFI}+=	efivar efidp
+SUBDIR.${MK_EFI}+=	efivar efidp efibootmgr
 SUBDIR.${MK_FLOPPY}+=	fdcontrol
 SUBDIR.${MK_FLOPPY}+=	fdformat
 SUBDIR.${MK_FLOPPY}+=	fdread
@@ -133,6 +135,7 @@ SUBDIR.${MK_FMTREE}+=	fmtree
 SUBDIR.${MK_FREEBSD_UPDATE}+=	freebsd-update
 SUBDIR.${MK_GSSAPI}+=	gssd
 SUBDIR.${MK_GPIO}+=	gpioctl
+SUBDIR.${MK_HBSD_UPDATE}+=	hbsd-update
 SUBDIR.${MK_INET6}+=	ip6addrctl
 SUBDIR.${MK_INET6}+=	mld6query
 SUBDIR.${MK_INET6}+=	ndp
@@ -190,7 +193,6 @@ SUBDIR.${MK_PPP}+=	ppp
 SUBDIR.${MK_QUOTAS}+=	edquota
 SUBDIR.${MK_QUOTAS}+=	quotaon
 SUBDIR.${MK_QUOTAS}+=	repquota
-SUBDIR.${MK_RCMDS}+=	rwhod
 SUBDIR.${MK_SENDMAIL}+=	editmap
 SUBDIR.${MK_SENDMAIL}+=	mailstats
 SUBDIR.${MK_SENDMAIL}+=	makemap
@@ -216,8 +218,6 @@ SUBDIR.${MK_WIRELESS}+=	wpa
 SUBDIR.${MK_TESTS}+=	tests
 
 .include <bsd.arch.inc.mk>
-
-SUBDIR:=	${SUBDIR:O}
 
 SUBDIR_PARALLEL=
 

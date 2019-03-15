@@ -10,6 +10,9 @@
 
 __<bsd.test.mk>__:
 
+# HBSDTODO: Research why compiling the tests fail with SafeStack.
+NOSAFESTACK=	yes
+
 # Third-party software (kyua, etc) prefix.
 LOCALBASE?=	/usr/local
 
@@ -65,6 +68,10 @@ _TESTS=
 .include <atf.test.mk>
 .include <plain.test.mk>
 .include <tap.test.mk>
+
+# Sort the tests alphabetically, so the results are deterministically formed
+# across runs.
+_TESTS:=	${_TESTS:O}
 
 # kyua automatically descends directories; only run make check on the
 # top-level directory

@@ -30,6 +30,8 @@ __FBSDID("$FreeBSD$");
 #include "opt_compat.h"
 #include "opt_inet.h"
 #include "opt_inet6.h"
+#include "opt_ktrace.h"
+#include "opt_pax.h"
 
 #define __ELF_WORD_SIZE 32
 
@@ -55,6 +57,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/mount.h>
 #include <sys/mutex.h>
 #include <sys/namei.h>
+#include <sys/pax.h>
 #include <sys/proc.h>
 #include <sys/procctl.h>
 #include <sys/reboot.h>
@@ -83,6 +86,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/msg.h>
 #include <sys/sem.h>
 #include <sys/shm.h>
+#ifdef KTRACE
+#include <sys/ktrace.h>
+#endif
 
 #ifdef INET
 #include <netinet/in.h>
@@ -454,10 +460,6 @@ freebsd32_mprotect(struct thread *td, struct freebsd32_mprotect_args *uap)
 	int prot;
 
 	prot = uap->prot;
-#if defined(__amd64__)
-	if (i386_read_exec && (prot & PROT_READ) != 0)
-		prot |= PROT_EXEC;
-#endif
 	return (kern_mprotect(td, (uintptr_t)PTRIN(uap->addr), uap->len,
 	    prot));
 }
@@ -468,11 +470,6 @@ freebsd32_mmap(struct thread *td, struct freebsd32_mmap_args *uap)
 	int prot;
 
 	prot = uap->prot;
-#if defined(__amd64__)
-	if (i386_read_exec && (prot & PROT_READ))
-		prot |= PROT_EXEC;
-#endif
-
 	return (kern_mmap(td, (uintptr_t)uap->addr, uap->len, prot,
 	    uap->flags, uap->fd, PAIR32TO64(off_t, uap->pos)));
 }
@@ -485,10 +482,6 @@ freebsd6_freebsd32_mmap(struct thread *td,
 	int prot;
 
 	prot = uap->prot;
-#if defined(__amd64__)
-	if (i386_read_exec && (prot & PROT_READ))
-		prot |= PROT_EXEC;
-#endif
 
 	return (kern_mmap(td, (uintptr_t)uap->addr, uap->len, prot,
 	    uap->flags, uap->fd, PAIR32TO64(off_t, uap->pos)));
@@ -658,6 +651,9 @@ freebsd32_kevent(struct thread *td, struct freebsd32_kevent_args *uap)
 		.k_copyout = freebsd32_kevent_copyout,
 		.k_copyin = freebsd32_kevent_copyin,
 	};
+#ifdef KTRACE
+	struct kevent32 *eventlist = uap->eventlist;
+#endif
 	int error;
 
 
@@ -670,8 +666,18 @@ freebsd32_kevent(struct thread *td, struct freebsd32_kevent_args *uap)
 		tsp = &ts;
 	} else
 		tsp = NULL;
+#ifdef KTRACE
+	if (KTRPOINT(td, KTR_STRUCT_ARRAY))
+		ktrstructarray("kevent32", UIO_USERSPACE, uap->changelist,
+		    uap->nchanges, sizeof(struct kevent32));
+#endif
 	error = kern_kevent(td, uap->fd, uap->nchanges, uap->nevents,
 	    &k_ops, tsp);
+#ifdef KTRACE
+	if (error == 0 && KTRPOINT(td, KTR_STRUCT_ARRAY))
+		ktrstructarray("kevent32", UIO_USERSPACE, eventlist,
+		    td->td_retval[0], sizeof(struct kevent32));
+#endif
 	return (error);
 }
 
@@ -2818,12 +2824,16 @@ freebsd32_copyout_strings(struct image_params *imgp)
 		execpath_len = strlen(imgp->execpath) + 1;
 	else
 		execpath_len = 0;
-	arginfo = (struct freebsd32_ps_strings *)curproc->p_sysent->
-	    sv_psstrings;
-	if (imgp->proc->p_sysent->sv_sigcode_base == 0)
+	arginfo = (struct freebsd32_ps_strings *)curproc->p_psstrings;
+	imgp->proc->p_sigcode_base = imgp->proc->p_sysent->sv_sigcode_base;
+	if (imgp->proc->p_sigcode_base == 0)
 		szsigcode = *(imgp->proc->p_sysent->sv_szsigcode);
-	else
+	else {
 		szsigcode = 0;
+#ifdef PAX_ASLR
+		pax_aslr_vdso(imgp->proc, &(imgp->proc->p_sigcode_base));
+#endif
+	}
 	destp =	(uintptr_t)arginfo;
 
 	/*
@@ -2950,8 +2960,8 @@ freebsd32_copyout_strings(struct image_params *imgp)
 int
 freebsd32_kldstat(struct thread *td, struct freebsd32_kldstat_args *uap)
 {
-	struct kld_file_stat stat;
-	struct kld32_file_stat stat32;
+	struct kld_file_stat *stat;
+	struct kld32_file_stat *stat32;
 	int error, version;
 
 	if ((error = copyin(&uap->stat->version, &version, sizeof(version)))
@@ -2961,17 +2971,23 @@ freebsd32_kldstat(struct thread *td, struct freebsd32_kldstat_args *uap)
 	    version != sizeof(struct kld32_file_stat))
 		return (EINVAL);
 
-	error = kern_kldstat(td, uap->fileid, &stat);
-	if (error != 0)
-		return (error);
-
-	bcopy(&stat.name[0], &stat32.name[0], sizeof(stat.name));
-	CP(stat, stat32, refs);
-	CP(stat, stat32, id);
-	PTROUT_CP(stat, stat32, address);
-	CP(stat, stat32, size);
-	bcopy(&stat.pathname[0], &stat32.pathname[0], sizeof(stat.pathname));
-	return (copyout(&stat32, uap->stat, version));
+	stat = malloc(sizeof(*stat), M_TEMP, M_WAITOK | M_ZERO);
+	stat32 = malloc(sizeof(*stat32), M_TEMP, M_WAITOK | M_ZERO);
+	error = kern_kldstat(td, uap->fileid, stat);
+	if (error == 0) {
+		bcopy(&stat->name[0], &stat32->name[0], sizeof(stat->name));
+		CP(*stat, *stat32, refs);
+		CP(*stat, *stat32, id);
+		PTROUT_CP(*stat, *stat32, address);
+		CP(*stat, *stat32, size);
+		bcopy(&stat->pathname[0], &stat32->pathname[0],
+		    sizeof(stat->pathname));
+		stat32->version  = version;
+		error = copyout(stat32, uap->stat, version);
+	}
+	free(stat, M_TEMP);
+	free(stat32, M_TEMP);
+	return (error);
 }
 
 int
@@ -3034,7 +3050,7 @@ freebsd32_procctl(struct thread *td, struct freebsd32_procctl_args *uap)
 	union {
 		struct procctl_reaper_pids32 rp;
 	} x32;
-	int error, error1, flags;
+	int error, error1, flags, signum;
 
 	switch (uap->com) {
 	case PROC_SPROTECT:
@@ -3072,6 +3088,15 @@ freebsd32_procctl(struct thread *td, struct freebsd32_procctl_args *uap)
 	case PROC_TRAPCAP_STATUS:
 		data = &flags;
 		break;
+	case PROC_PDEATHSIG_CTL:
+		error = copyin(uap->data, &signum, sizeof(signum));
+		if (error != 0)
+			return (error);
+		data = &signum;
+		break;
+	case PROC_PDEATHSIG_STATUS:
+		data = &signum;
+		break;
 	default:
 		return (EINVAL);
 	}
@@ -3091,6 +3116,10 @@ freebsd32_procctl(struct thread *td, struct freebsd32_procctl_args *uap)
 	case PROC_TRAPCAP_STATUS:
 		if (error == 0)
 			error = copyout(&flags, uap->data, sizeof(flags));
+		break;
+	case PROC_PDEATHSIG_STATUS:
+		if (error == 0)
+			error = copyout(&signum, uap->data, sizeof(signum));
 		break;
 	}
 	return (error);

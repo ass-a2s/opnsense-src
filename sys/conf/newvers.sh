@@ -43,13 +43,36 @@
 #                      included if the tree is modified.
 
 TYPE="FreeBSD"
-REVISION="11.1"
-BRANCH="RELEASE-p1"
+REVISION="11.2"
+BRANCH="RELEASE-p9"
 if [ -n "${BRANCH_OVERRIDE}" ]; then
 	BRANCH=${BRANCH_OVERRIDE}
 fi
+BRANCH="${BRANCH}-HBSD"
 RELEASE="${REVISION}-${BRANCH}"
 VERSION="${TYPE} ${RELEASE}"
+
+#
+# findvcs dir
+#	Looks up directory dir at world root and up the filesystem
+#
+findvcs()
+{
+	local savedir
+
+	savedir=$(pwd)
+	cd ${SYSDIR}/..
+	while [ $(pwd) != "/" ]; do
+		if [ -e "./$1" ]; then
+			VCSDIR=$(pwd)"/$1"
+			cd ${savedir}
+			return 0
+		fi
+		cd ..
+	done
+	cd ${savedir}
+	return 1
+}
 
 if [ -z "${SYSDIR}" ]; then
     SYSDIR=$(dirname $0)/..
@@ -154,19 +177,20 @@ for dir in /usr/bin /usr/local/bin; do
 		p4_cmd=${dir}/p4
 	fi
 done
-if [ -d "${SYSDIR}/../.git" ] ; then
+
+if findvcs .git; then
 	for dir in /usr/bin /usr/local/bin; do
 		if [ -x "${dir}/git" ] ; then
-			git_cmd="${dir}/git --git-dir=${SYSDIR}/../.git"
+			git_cmd="${dir}/git --git-dir=${VCSDIR}"
 			break
 		fi
 	done
 fi
 
-if [ -d "${SYSDIR}/../.hg" ] ; then
+if findvcs .hg; then
 	for dir in /usr/bin /usr/local/bin; do
 		if [ -x "${dir}/hg" ] ; then
-			hg_cmd="${dir}/hg -R ${SYSDIR}/.."
+			hg_cmd="${dir}/hg -R ${VCSDIR}"
 			break
 		fi
 	done
@@ -195,8 +219,9 @@ if [ -n "$git_cmd" ] ; then
 		svn=" r${svn}"
 		git="=${git}"
 	else
-		svn=`$git_cmd log | fgrep 'git-svn-id:' | head -1 | \
-		     sed -n 's/^.*@\([0-9][0-9]*\).*$/\1/p'`
+		svn=`$git_cmd log --grep '^git-svn-id:' | \
+		    grep '^    git-svn-id:' | head -1 | \
+		    sed -n 's/^.*@\([0-9][0-9]*\).*$/\1/p'`
 		if [ -z "$svn" ] ; then
 			svn=`$git_cmd log --format='format:%N' | \
 			     grep '^svn ' | head -1 | \
@@ -213,7 +238,7 @@ if [ -n "$git_cmd" ] ; then
 	if [ -n "$git_b" ] ; then
 		git="${git}(${git_b})"
 	fi
-	if $git_cmd --work-tree=${SYSDIR}/.. diff-index \
+	if $git_cmd --work-tree=${VCSDIR}/.. diff-index \
 	    --name-only HEAD | read dummy; then
 		git="${git}-dirty"
 		modified=true
@@ -265,11 +290,17 @@ while getopts rR opt; do
 done
 shift $((OPTIND - 1))
 
+if [ -n "${HBSD_EXTRA}" ] ; then
+	hbsdv=" [${HBSD_EXTRA}]"
+else
+	hbsdv=" "
+fi
+
 if [ -z "${include_metadata}" ]; then
-	VERINFO="${VERSION} ${svn}${git}${hg}${p4version}"
+	VERINFO="${VERSION}${hbsdv}${svn}${git}${hg}${p4version}"
 	VERSTR="${VERINFO}\\n"
 else
-	VERINFO="${VERSION} #${v}${svn}${git}${hg}${p4version}: ${t}"
+	VERINFO="${VERSION} #${v}${hbsdv}${svn}${git}${hg}${p4version}: ${t}"
 	VERSTR="${VERINFO}\\n    ${u}@${h}:${d}\\n"
 fi
 

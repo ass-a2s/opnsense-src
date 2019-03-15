@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
  *
@@ -57,6 +59,8 @@ emulate_wrmsr(struct vmctx *ctx, int vcpu, uint32_t num, uint64_t val)
 		case MSR_BIOS_UPDT_TRIG:
 			return (0);
 		case MSR_BIOS_SIGN:
+			return (0);
+		case MSR_IA32_DEBUG_INTERFACE:
 			return (0);
 		default:
 			break;
@@ -120,6 +124,13 @@ emulate_rdmsr(struct vmctx *ctx, int vcpu, uint32_t num, uint64_t *val)
 			 */
 			*val = 0x000a1003;
 			break;
+		case MSR_IA32_DEBUG_INTERFACE:
+			/*
+			 * Mark the Silicon Debug feature as disabled
+			 * and lock the configuration.
+			 */
+			*val = 0 | IA32_DEBUG_INTERFACE_LOCK;
+			return (0);
 		default:
 			error = -1;
 			break;

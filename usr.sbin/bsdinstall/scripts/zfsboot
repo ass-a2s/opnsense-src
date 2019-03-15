@@ -250,7 +250,7 @@ msg_encrypt_disks_help="Use geli(8) to encrypt all data partitions"
 msg_error="Error"
 msg_force_4k_sectors="Force 4K Sectors?"
 msg_force_4k_sectors_help="Align partitions to 4K sector boundries and set vfs.zfs.min_auto_ashift=12"
-msg_freebsd_installer="FreeBSD Installer"
+msg_freebsd_installer="HardenedBSD Installer"
 msg_geli_password="Enter a strong passphrase, used to protect your encryption keys. You will be required to enter this passphrase each time the system is booted"
 msg_geli_setup="Initializing encryption on selected disks,\n this will take several seconds per disk"
 msg_install="Install"
@@ -1446,7 +1446,7 @@ zfs_create_boot()
 	if [ "$ZFSBOOT_FORCE_4K_SECTORS" ]; then
 		f_eval_catch $funcname echo "$ECHO_APPEND" \
 	             'vfs.zfs.min_auto_ashift=12' \
-	             $BSDINSTALL_TMPBOOT/loader.conf.zfs || return $FAILURE
+	             $BSDINSTALL_TMPETC/sysctl.conf.zfs || return $FAILURE
 	fi
 
 	if [ "$ZFSBOOT_SWAP_MIRROR" ]; then
@@ -1554,17 +1554,27 @@ f_dprintf "BSDINSTALL_TMPETC=[%s]" "$BSDINSTALL_TMPETC"
 f_dprintf "FSTAB_FMT=[%s]" "$FSTAB_FMT"
 
 #
-# If the system was booted with UEFI, set the default boot type to UEFI
+# Determine default boot type
 #
-bootmethod=$( sysctl -n machdep.bootmethod )
-f_dprintf "machdep.bootmethod=[%s]" "$bootmethod"
-if [ "$bootmethod" = "UEFI" ]; then
-	: ${ZFSBOOT_BOOT_TYPE:=BIOS+UEFI}
+case $(uname -m) in
+arm64)
+	# We support only UEFI boot for arm64
+	: ${ZFSBOOT_BOOT_TYPE:=UEFI}
 	: ${ZFSBOOT_PARTITION_SCHEME:=GPT}
-else
-	: ${ZFSBOOT_BOOT_TYPE:=BIOS}
-	: ${ZFSBOOT_PARTITION_SCHEME:=GPT}
-fi
+	;;
+*)
+	# If the system was booted with UEFI, set the default boot type to UEFI
+	bootmethod=$( sysctl -n machdep.bootmethod )
+	f_dprintf "machdep.bootmethod=[%s]" "$bootmethod"
+	if [ "$bootmethod" = "UEFI" ]; then
+		: ${ZFSBOOT_BOOT_TYPE:=BIOS+UEFI}
+		: ${ZFSBOOT_PARTITION_SCHEME:=GPT}
+	else
+		: ${ZFSBOOT_BOOT_TYPE:=BIOS}
+		: ${ZFSBOOT_PARTITION_SCHEME:=GPT}
+	fi
+	;;
+esac
 
 #
 # Loop over the main menu until we've accomplished what we came here to do

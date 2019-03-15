@@ -30,6 +30,7 @@ __FBSDID("$FreeBSD$");
 #include "opt_ddb.h"
 #include "opt_kld.h"
 #include "opt_hwpmc_hooks.h"
+#include "opt_pax.h"
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -288,7 +289,7 @@ linker_file_sysuninit(linker_file_t lf)
 }
 
 static void
-linker_file_register_sysctls(linker_file_t lf)
+linker_file_register_sysctls(linker_file_t lf, bool enable)
 {
 	struct sysctl_oid **start, **stop, **oidp;
 
@@ -303,8 +304,34 @@ linker_file_register_sysctls(linker_file_t lf)
 
 	sx_xunlock(&kld_sx);
 	sysctl_wlock();
+	for (oidp = start; oidp < stop; oidp++) {
+		if (enable)
+			sysctl_register_oid(*oidp);
+		else
+			sysctl_register_disabled_oid(*oidp);
+	}
+	sysctl_wunlock();
+	sx_xlock(&kld_sx);
+}
+
+static void
+linker_file_enable_sysctls(linker_file_t lf)
+{
+	struct sysctl_oid **start, **stop, **oidp;
+
+	KLD_DPF(FILE,
+	    ("linker_file_enable_sysctls: enable SYSCTLs for %s\n",
+	    lf->filename));
+
+	sx_assert(&kld_sx, SA_XLOCKED);
+
+	if (linker_file_lookup_set(lf, "sysctl_set", &start, &stop, NULL) != 0)
+		return;
+
+	sx_xunlock(&kld_sx);
+	sysctl_wlock();
 	for (oidp = start; oidp < stop; oidp++)
-		sysctl_register_oid(*oidp);
+		sysctl_enable_oid(*oidp);
 	sysctl_wunlock();
 	sx_xlock(&kld_sx);
 }
@@ -430,7 +457,7 @@ linker_load_file(const char *filename, linker_file_t *result)
 				return (error);
 			}
 			modules = !TAILQ_EMPTY(&lf->modules);
-			linker_file_register_sysctls(lf);
+			linker_file_register_sysctls(lf, false);
 			linker_file_sysinit(lf);
 			lf->flags |= LINKER_FILE_LINKED;
 
@@ -443,6 +470,7 @@ linker_load_file(const char *filename, linker_file_t *result)
 				linker_file_unload(lf, LINKER_UNLOAD_FORCE);
 				return (ENOEXEC);
 			}
+			linker_file_enable_sysctls(lf);
 			EVENTHANDLER_INVOKE(kld_load, lf);
 			*result = lf;
 			return (0);
@@ -691,8 +719,8 @@ linker_file_unload(linker_file_t file, int flags)
 	 */
 	if (file->flags & LINKER_FILE_LINKED) {
 		file->flags &= ~LINKER_FILE_LINKED;
-		linker_file_sysuninit(file);
 		linker_file_unregister_sysctls(file);
+		linker_file_sysuninit(file);
 	}
 	TAILQ_REMOVE(&linker_files, file, link);
 
@@ -1142,6 +1170,10 @@ sys_kldfind(struct thread *td, struct kldfind_args *uap)
 		return (error);
 #endif
 
+	error = priv_check(td, PRIV_KLD_STAT);
+	if (error != 0)
+		return (error);
+
 	td->td_retval[0] = -1;
 
 	pathname = malloc(MAXPATHLEN, M_TEMP, M_WAITOK);
@@ -1173,6 +1205,10 @@ sys_kldnext(struct thread *td, struct kldnext_args *uap)
 		return (error);
 #endif
 
+	error = priv_check(td, PRIV_KLD_STAT);
+	if (error != 0)
+		return (error);
+
 	sx_xlock(&kld_sx);
 	if (uap->fileid == 0)
 		lf = TAILQ_FIRST(&linker_files);
@@ -1201,7 +1237,7 @@ out:
 int
 sys_kldstat(struct thread *td, struct kldstat_args *uap)
 {
-	struct kld_file_stat stat;
+	struct kld_file_stat *stat;
 	int error, version;
 
 	/*
@@ -1214,10 +1250,12 @@ sys_kldstat(struct thread *td, struct kldstat_args *uap)
 	    version != sizeof(struct kld_file_stat))
 		return (EINVAL);
 
-	error = kern_kldstat(td, uap->fileid, &stat);
-	if (error != 0)
-		return (error);
-	return (copyout(&stat, uap->stat, version));
+	stat = malloc(sizeof(*stat), M_TEMP, M_WAITOK | M_ZERO);
+	error = kern_kldstat(td, uap->fileid, stat);
+	if (error == 0)
+		error = copyout(stat, uap->stat, version);
+	free(stat, M_TEMP);
+	return (error);
 }
 
 int
@@ -1225,13 +1263,16 @@ kern_kldstat(struct thread *td, int fileid, struct kld_file_stat *stat)
 {
 	linker_file_t lf;
 	int namelen;
-#ifdef MAC
 	int error;
-
+#ifdef MAC
 	error = mac_kld_check_stat(td->td_ucred);
 	if (error)
 		return (error);
 #endif
+
+	error = priv_check(td, PRIV_KLD_STAT);
+	if (error != 0)
+		return (error);
 
 	sx_xlock(&kld_sx);
 	lf = linker_find_file_by_id(fileid);
@@ -1247,7 +1288,11 @@ kern_kldstat(struct thread *td, int fileid, struct kld_file_stat *stat)
 	bcopy(lf->filename, &stat->name[0], namelen);
 	stat->refs = lf->refs;
 	stat->id = lf->id;
+#ifdef PAX_HARDENING
+	stat->address = NULL;
+#else
 	stat->address = lf->address;
+#endif
 	stat->size = lf->size;
 	/* Version 2 fields: */
 	namelen = strlen(lf->pathname) + 1;
@@ -1290,6 +1335,10 @@ sys_kldfirstmod(struct thread *td, struct kldfirstmod_args *uap)
 		return (error);
 #endif
 
+	error = priv_check(td, PRIV_KLD_STAT);
+	if (error != 0)
+		return (error);
+
 	sx_xlock(&kld_sx);
 	lf = linker_find_file_by_id(uap->fileid);
 	if (lf) {
@@ -1322,6 +1371,10 @@ sys_kldsym(struct thread *td, struct kldsym_args *uap)
 		return (error);
 #endif
 
+	error = priv_check(td, PRIV_KLD_STAT);
+	if (error != 0)
+		return (error);
+
 	if ((error = copyin(uap->data, &lookup, sizeof(lookup))) != 0)
 		return (error);
 	if (lookup.version != sizeof(lookup) ||
@@ -1337,7 +1390,11 @@ sys_kldsym(struct thread *td, struct kldsym_args *uap)
 			error = ENOENT;
 		else if (LINKER_LOOKUP_SYMBOL(lf, symstr, &sym) == 0 &&
 		    LINKER_SYMBOL_VALUES(lf, sym, &symval) == 0) {
+#ifdef PAX_HARDENING
+			lookup.symvalue = (uintptr_t) NULL;
+#else
 			lookup.symvalue = (uintptr_t) symval.value;
+#endif
 			lookup.symsize = symval.size;
 			error = copyout(&lookup, uap->data, sizeof(lookup));
 		} else
@@ -1346,7 +1403,11 @@ sys_kldsym(struct thread *td, struct kldsym_args *uap)
 		TAILQ_FOREACH(lf, &linker_files, link) {
 			if (LINKER_LOOKUP_SYMBOL(lf, symstr, &sym) == 0 &&
 			    LINKER_SYMBOL_VALUES(lf, sym, &symval) == 0) {
+#ifdef PAX_HARDENING
+				lookup.symvalue = (uintptr_t)NULL;
+#else
 				lookup.symvalue = (uintptr_t)symval.value;
+#endif
 				lookup.symsize = symval.size;
 				error = copyout(&lookup, uap->data,
 				    sizeof(lookup));
@@ -1640,7 +1701,7 @@ restart:
 		if (linker_file_lookup_set(lf, "sysinit_set", &si_start,
 		    &si_stop, NULL) == 0)
 			sysinit_add(si_start, si_stop);
-		linker_file_register_sysctls(lf);
+		linker_file_register_sysctls(lf, true);
 		lf->flags |= LINKER_FILE_LINKED;
 		continue;
 fail:

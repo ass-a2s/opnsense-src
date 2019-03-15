@@ -41,6 +41,7 @@ SUBDIR=	alias \
 	elfdump \
 	enigma \
 	env \
+	etdump \
 	expand \
 	false \
 	fetch \
@@ -133,8 +134,10 @@ SUBDIR=	alias \
 	rpcinfo \
 	rs \
 	rup \
+	ruptime \
 	rusers \
 	rwall \
+	rwho \
 	script \
 	sdiff \
 	sed \
@@ -148,6 +151,7 @@ SUBDIR=	alias \
 	split \
 	stat \
 	stdbuf \
+	strings \
 	su \
 	systat \
 	tabs \
@@ -214,6 +218,9 @@ SUBDIR.${MK_GAMES}+=	number
 SUBDIR.${MK_GAMES}+=	pom
 SUBDIR.${MK_GAMES}+=	primes
 SUBDIR.${MK_GAMES}+=	random
+.if ${MK_GNU_DIFF} == "no"
+SUBDIR+=		diff
+.endif
 .if ${MK_GPL_DTC} != "yes"
 .if ${COMPILER_FEATURES:Mc++11}
 SUBDIR+=	dtc
@@ -242,7 +249,9 @@ SUBDIR.${MK_MAN_UTILS}+=	catman
 SUBDIR.${MK_MAN_UTILS}+=	makewhatis
 .endif
 SUBDIR.${MK_MAN_UTILS}+=	man
+.if ${MK_LIBRESSL} == "no"
 SUBDIR.${MK_NETCAT}+=	nc
+.endif
 SUBDIR.${MK_NIS}+=	ypcat
 SUBDIR.${MK_NIS}+=	ypmatch
 SUBDIR.${MK_NIS}+=	ypwhich
@@ -254,8 +263,6 @@ SUBDIR.${MK_OPENSSL}+=	newkey
 SUBDIR.${MK_QUOTAS}+=	quota
 SUBDIR.${MK_RCMDS}+=	rlogin
 SUBDIR.${MK_RCMDS}+=	rsh
-SUBDIR.${MK_RCMDS}+=	ruptime
-SUBDIR.${MK_RCMDS}+=	rwho
 SUBDIR.${MK_SENDMAIL}+=	vacation
 SUBDIR.${MK_TALK}+=	talk
 SUBDIR.${MK_TELNET}+=	telnet
@@ -285,8 +292,7 @@ SUBDIR.${MK_TOOLCHAIN}+=	readelf
 SUBDIR.${MK_TOOLCHAIN}+=	rpcgen
 SUBDIR.${MK_TOOLCHAIN}+=	unifdef
 SUBDIR.${MK_TOOLCHAIN}+=	size
-SUBDIR.${MK_TOOLCHAIN}+=	strings
-.if ${MACHINE_ARCH} != "aarch64" # ARM64TODO xlint does not build
+.if ${MK_LINT} != "no" && ${MACHINE_ARCH} != "aarch64" # ARM64TODO xlint does not build
 SUBDIR.${MK_TOOLCHAIN}+=	xlint
 .endif
 SUBDIR.${MK_TOOLCHAIN}+=	xstr
@@ -310,8 +316,6 @@ SUBDIR+=	mkesdb_static
 .endif
 
 .include <bsd.arch.inc.mk>
-
-SUBDIR:=	${SUBDIR:O:u}
 
 SUBDIR_PARALLEL=
 

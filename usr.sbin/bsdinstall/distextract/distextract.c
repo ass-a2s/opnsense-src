@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2011 Nathan Whitehorn
  * Copyright (c) 2014 Devin Teske <dteske@FreeBSD.org>
  * All rights reserved.
@@ -69,7 +71,7 @@ main(void)
 	size_t span;
 	struct dpv_config *config;
 	struct dpv_file_node *dist = dists;
-	static char backtitle[] = "FreeBSD Installer";
+	static char backtitle[] = "HardenedBSD Installer";
 	static char title[] = "Archive Extraction";
 	static char aprompt[] = "\n  Overall Progress:";
 	static char pprompt[] = "Extracting distribution files...\n";

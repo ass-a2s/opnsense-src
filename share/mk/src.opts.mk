@@ -54,6 +54,7 @@ __DEFAULT_YES_OPTIONS = \
     AUTHPF \
     AUTOFS \
     BHYVE \
+    BIND_NOW \
     BINUTILS \
     BINUTILS_BOOTSTRAP \
     BLACKLIST \
@@ -62,6 +63,7 @@ __DEFAULT_YES_OPTIONS = \
     BOOTPARAMD \
     BOOTPD \
     BSD_CPIO \
+    BSD_GREP_FASTMATCH \
     BSDINSTALL \
     BSNMP \
     BZIP2 \
@@ -93,17 +95,19 @@ __DEFAULT_YES_OPTIONS = \
     FMTREE \
     FORTH \
     FP_LIBC \
-    FREEBSD_UPDATE \
     FTP \
     GAMES \
     GCOV \
     GDB \
     GNU \
+    GNU_DIFF \
+    GNU_GREP \
     GNU_GREP_COMPAT \
     GPIO \
     GPL_DTC \
     GROFF \
     HAST \
+    HBSD_UPDATE \
     HTML \
     HYPERV \
     ICONV \
@@ -119,9 +123,11 @@ __DEFAULT_YES_OPTIONS = \
     LDNS \
     LDNS_UTILS \
     LEGACY_CONSOLE \
-    LIB32 \
     LIBPTHREAD \
     LIBTHR \
+    LOADER_GELI \
+    LOADER_OFW \
+    LOADER_UBOOT \
     LOCALES \
     LOCATE \
     LPR \
@@ -143,18 +149,19 @@ __DEFAULT_YES_OPTIONS = \
     PF \
     PKGBOOTSTRAP \
     PMC \
-    PORTSNAP \
     PPP \
     QUOTAS \
     RADIUS_SUPPORT \
     RCMDS \
     RBOOTD \
     RCS \
+    RELRO \
     RESCUE \
     ROUTED \
     SENDMAIL \
     SETUID_LOGIN \
     SHAREDOCS \
+    SHARED_TOOLCHAIN \
     SOURCELESS \
     SOURCELESS_HOST \
     SOURCELESS_UCODE \
@@ -184,16 +191,25 @@ __DEFAULT_NO_OPTIONS = \
     CLANG_EXTRAS \
     DTRACE_TESTS \
     EISA \
+    FREEBSD_UPDATE \
     HESIOD \
+    LIB32 \
+    LIBRESSL \
     LIBSOFT \
+    LINT \
+    LOADER_FIREWIRE \
+    LOADER_FORCE_LE \
     NAND \
     OFED \
     OPENLDAP \
+    PORTSNAP \
     REPRODUCIBLE_BUILD \
     RPCBIND_WARMSTART_SUPPORT \
     SHARED_TOOLCHAIN \
     SORT_THREADS \
     SVN \
+    ZONEINFO_LEAPSECONDS_SUPPORT \
+    ZONEINFO_OLD_TIMEZONES_SUPPORT \
 
 
 #
@@ -267,17 +283,49 @@ BROKEN_OPTIONS+=LLDB
 .if ${__T} != "armv6"
 BROKEN_OPTIONS+=LIBSOFT
 .endif
-.if ${__T:Mmips*} || ${__T:Mpowerpc*} || ${__T:Msparc64} || ${__T:Mriscv*}
+# EFI doesn't exist on mips, pc98, powerpc, sparc or riscv.
+.if ${__T:Mmips*} || ${__TT:Mpc98*} || ${__T:Mpowerpc*} || ${__T:Msparc64} || \
+    ${__T:Mriscv*}
 BROKEN_OPTIONS+=EFI
 .endif
+# GELI isn't supported on !x86
+.if ${__T} != "i386" && ${__T} != "amd64"
+BROKEN_OPTIONS+=LOADER_GELI
+.endif
+# OFW is only for powerpc and sparc64, exclude others
+.if ${__T:Mpowerpc*} == "" && ${__T:Msparc64} == ""
+BROKEN_OPTIONS+=LOADER_OFW
+.endif
+# UBOOT is only for arm, mips and powerpc, exclude others
+.if ${__T:Marm*} == "" && ${__T:Mmips*} == "" && ${__T:Mpowerpc*} == ""
+BROKEN_OPTIONS+=LOADER_UBOOT
+.endif
 
+.if ${__T:Mmips64*}
+# profiling won't work on MIPS64 because there is only assembly for o32
+BROKEN_OPTIONS+=PROFILE
+.endif
 .if ${__T} == "aarch64" || ${__T} == "amd64" || ${__T} == "i386" || \
     ${__T} == "powerpc64" || ${__T} == "sparc64"
 __DEFAULT_YES_OPTIONS+=CXGBETOOL
+__DEFAULT_YES_OPTIONS+=MLX5TOOL
 .else
 __DEFAULT_NO_OPTIONS+=CXGBETOOL
+__DEFAULT_NO_OPTIONS+=MLX5TOOL
 .endif
 
+# HardenedBSD options
+.if ${__T} == "amd64" || ${__T} == "i386" || ${__T} == "aarch64"
+__DEFAULT_YES_OPTIONS+=PIE
+.else
+__DEFAULT_NO_OPTIONS+=PIE
+.endif
+
+.if ${__T} == "amd64"
+__DEFAULT_YES_OPTIONS+=SAFESTACK
+.else
+__DEFAULT_NO_OPTIONS+=SAFESTACK
+.endif
 .include <bsd.mkopt.mk>
 
 #
@@ -356,6 +404,10 @@ MK_ATM:=	no
 MK_BLUETOOTH:=	no
 .endif
 
+.if ${MK_NLS} == "no"
+MK_NLS_CATALOGS:= no
+.endif
+
 .if ${MK_OPENSSL} == "no"
 MK_OPENSSH:=	no
 MK_KERBEROS:=	no
@@ -373,11 +425,17 @@ MK_DTRACE_TESTS:= no
 MK_GROFF:=	no
 .endif
 
+.if ${MK_ZONEINFO} == "no"
+MK_ZONEINFO_LEAPSECONDS_SUPPORT:= no
+MK_ZONEINFO_OLD_TIMEZONES_SUPPORT:= no
+.endif
+
 .if ${MK_CROSS_COMPILER} == "no"
 MK_BINUTILS_BOOTSTRAP:= no
 MK_CLANG_BOOTSTRAP:= no
 MK_ELFTOOLCHAIN_BOOTSTRAP:= no
 MK_GCC_BOOTSTRAP:= no
+MK_LLD_BOOTSTRAP:= no
 .endif
 
 .if ${MK_META_MODE} == "yes"

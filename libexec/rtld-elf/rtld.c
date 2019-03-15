@@ -42,6 +42,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/mount.h>
 #include <sys/mman.h>
+#ifdef HARDENEDBSD
+#include <sys/pax.h>
+#endif
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/uio.h>
@@ -70,6 +73,13 @@ __FBSDID("$FreeBSD$");
 /* Types. */
 typedef void (*func_ptr_type)();
 typedef void * (*path_enum_proc) (const char *path, size_t len, void *arg);
+
+#ifdef HARDENEDBSD
+struct integriforce_so_check {
+	char	 isc_path[MAXPATHLEN];
+	int	 isc_result;
+};
+#endif
 
 /*
  * Function declarations.
@@ -561,6 +571,10 @@ _rtld(Elf_Addr *sp, func_ptr_type *exit_proc, Obj_Entry **objp)
     dbg("initializing thread locks");
     lockdflt_init();
 
+    if (aux_info[AT_STACKPROT] != NULL &&
+      aux_info[AT_STACKPROT]->a_un.a_val != 0)
+	    stack_prot = aux_info[AT_STACKPROT]->a_un.a_val;
+
     /*
      * Load the main program, or process its program header if it is
      * already loaded.
@@ -571,7 +585,10 @@ _rtld(Elf_Addr *sp, func_ptr_type *exit_proc, Obj_Entry **objp)
 	close(fd);
 	if (obj_main == NULL)
 	    rtld_die();
-	max_stack_flags = obj->stack_flags;
+	max_stack_flags = obj_main->stack_flags;
+	if ((max_stack_flags & PF_X) == PF_X)
+	    if ((stack_prot & PROT_EXEC) == 0)
+	        max_stack_flags &= ~(PF_X);
     } else {				/* Main program already loaded. */
 	dbg("processing main program's program header");
 	assert(aux_info[AT_PHDR] != NULL);
@@ -603,10 +620,6 @@ _rtld(Elf_Addr *sp, func_ptr_type *exit_proc, Obj_Entry **objp)
     }
     dbg("obj_main path %s", obj_main->path);
     obj_main->mainprog = true;
-
-    if (aux_info[AT_STACKPROT] != NULL &&
-      aux_info[AT_STACKPROT]->a_un.a_val != 0)
-	    stack_prot = aux_info[AT_STACKPROT]->a_un.a_val;
 
 #ifndef COMPAT_32BIT
     /*
@@ -752,6 +765,12 @@ _rtld(Elf_Addr *sp, func_ptr_type *exit_proc, Obj_Entry **objp)
 	obj_main->preinit_array = obj_main->init_array =
 	    obj_main->fini_array = (Elf_Addr)NULL;
     }
+
+    /*
+     * Execute MD initializers required before we call the objects'
+     * init functions.
+     */
+    pre_init();
 
     wlock_acquire(rtld_bind_lock, &lockstate);
     if (obj_main->crt_no_init)
@@ -997,7 +1016,7 @@ digest_dynamic1(Obj_Entry *obj, int early, const Elf_Dyn **dyn_rpath,
     const Elf_Hashelt *hashtab;
     const Elf32_Word *hashval;
     Elf32_Word bkt, nmaskwords;
-    int bloom_size32;
+    unsigned int bloom_size32;
     int plttype = DT_REL;
 
     *dyn_rpath = NULL;
@@ -1384,7 +1403,7 @@ digest_phdr(const Elf_Phdr *phdr, int phnum, caddr_t entry, const char *path)
 	break;
     }
 
-    obj->stack_flags = PF_X | PF_R | PF_W;
+    obj->stack_flags = PF_R | PF_W;
 
     for (ph = phdr;  ph < phlimit;  ph++) {
 	switch (ph->p_type) {
@@ -1589,19 +1608,20 @@ find_library(const char *xname, const Obj_Entry *refobj, int *fdp)
     bool nodeflib, objgiven;
 
     objgiven = refobj != NULL;
-    if (strchr(xname, '/') != NULL) {	/* Hard coded pathname */
-	if (xname[0] != '/' && !trust) {
-	    _rtld_error("Absolute pathname required for shared object \"%s\"",
-	      xname);
-	    return NULL;
-	}
-	return (origin_subst(__DECONST(Obj_Entry *, refobj),
-	  __DECONST(char *, xname)));
-    }
 
     if (libmap_disable || !objgiven ||
-	(name = lm_find(refobj->path, xname)) == NULL)
+      (name = lm_find(refobj->path, xname)) == NULL)
 	name = (char *)xname;
+
+    if (strchr(name, '/') != NULL) {	/* Hard coded pathname */
+	if (name[0] != '/' && !trust) {
+	    _rtld_error("Absolute pathname required for shared object \"%s\"",
+	      name);
+	    return (NULL);
+	}
+	return (origin_subst(__DECONST(Obj_Entry *, refobj),
+	  __DECONST(char *, name)));
+    }
 
     dbg(" Searching for \"%s\"", name);
 
@@ -1658,6 +1678,7 @@ find_symdef(unsigned long symnum, const Obj_Entry *refobj,
     const Elf_Sym *ref;
     const Elf_Sym *def;
     const Obj_Entry *defobj;
+    const Ver_Entry *ve;
     SymLook req;
     const char *name;
     int res;
@@ -1677,6 +1698,7 @@ find_symdef(unsigned long symnum, const Obj_Entry *refobj,
     name = refobj->strtab + ref->st_name;
     def = NULL;
     defobj = NULL;
+    ve = NULL;
 
     /*
      * We don't have to do a full scale lookup if the symbol is local.
@@ -1693,7 +1715,7 @@ find_symdef(unsigned long symnum, const Obj_Entry *refobj,
 	}
 	symlook_init(&req, name);
 	req.flags = flags;
-	req.ventry = fetch_ventry(refobj, symnum);
+	ve = req.ventry = fetch_ventry(refobj, symnum);
 	req.lockstate = lockstate;
 	res = symlook_default(&req, refobj);
 	if (res == 0) {
@@ -1723,7 +1745,8 @@ find_symdef(unsigned long symnum, const Obj_Entry *refobj,
 	}
     } else {
 	if (refobj != &obj_rtld)
-	    _rtld_error("%s: Undefined symbol \"%s\"", refobj->path, name);
+	    _rtld_error("%s: Undefined symbol \"%s%s%s\"", refobj->path, name,
+	      ve != NULL ? "@" : "", ve != NULL ? ve->name : "");
     }
     return def;
 }
@@ -2408,6 +2431,11 @@ do_load_object(int fd, const char *name, char *path, struct stat *sbp,
 {
     Obj_Entry *obj;
     struct statfs fs;
+#ifdef HARDENEDBSD
+    struct integriforce_so_check check;
+    int res, err;
+    size_t sz;
+#endif
 
     /*
      * but first, make sure that environment variables haven't been
@@ -2423,6 +2451,24 @@ do_load_object(int fd, const char *name, char *path, struct stat *sbp,
 	    return NULL;
 	}
     }
+#ifdef HARDENEDBSD
+    if (path != NULL) {
+	    sz = sizeof(int);
+	    err = sysctlbyname("kern.features.integriforce",
+		&res, &sz, NULL, 0);
+	    if (err == 0 && res == 1) {
+		    strlcpy(check.isc_path, path, MAXPATHLEN);
+		    check.isc_result = 0;
+		    sz = sizeof(struct integriforce_so_check);
+		    err = sysctlbyname("hardening.secadm.integriforce_so",
+			&check, &sz, &check, sizeof(struct integriforce_so_check));
+		    if (err == 0 && check.isc_result != 0) {
+			    _rtld_error("Integriforce validation failed on %s. Aborting.\n", path);
+			    return (NULL);
+		    }
+	    }
+    }
+#endif
     dbg("loading \"%s\"", printable_path(path));
     obj = map_object(fd, printable_path(path), sbp);
     if (obj == NULL)
@@ -2453,6 +2499,9 @@ do_load_object(int fd, const char *name, char *path, struct stat *sbp,
     obj_loads++;
     linkmap_add(obj);	/* for GDB & dlinfo() */
     max_stack_flags |= obj->stack_flags;
+    if ((max_stack_flags & PF_X) == PF_X)
+        if ((stack_prot & PROT_EXEC) == 0)
+            max_stack_flags &= ~(PF_X);
 
     dbg("  %p .. %p: %s", obj->mapbase,
          obj->mapbase + obj->mapsize - 1, obj->path);
@@ -3488,7 +3537,8 @@ do_dlsym(void *handle, const char *name, void *retaddr, const Ver_Entry *ve,
 	return (sym);
     }
 
-    _rtld_error("Undefined symbol \"%s\"", name);
+    _rtld_error("Undefined symbol \"%s%s%s\"", name, ve != NULL ? "@" : "",
+      ve != NULL ? ve->name : "");
     lock_release(rtld_bind_lock, &lockstate);
     LD_UTRACE(UTRACE_DLSYM_STOP, handle, NULL, 0, 0, name);
     return NULL;

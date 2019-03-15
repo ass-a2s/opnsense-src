@@ -1027,7 +1027,7 @@ mdstart_swap(struct md_s *sc, struct bio *bp)
 				rv = vm_pager_get_pages(sc->object, &m, 1,
 				    NULL, NULL);
 			if (rv == VM_PAGER_ERROR) {
-				vm_page_xunbusy(m);
+				md_swap_page_free(m);
 				break;
 			} else if (rv == VM_PAGER_FAIL) {
 				/*
@@ -1057,7 +1057,7 @@ mdstart_swap(struct md_s *sc, struct bio *bp)
 				rv = vm_pager_get_pages(sc->object, &m, 1,
 				    NULL, NULL);
 			if (rv == VM_PAGER_ERROR) {
-				vm_page_xunbusy(m);
+				md_swap_page_free(m);
 				break;
 			} else if (rv == VM_PAGER_FAIL)
 				pmap_zero_page(m);
@@ -1073,8 +1073,10 @@ mdstart_swap(struct md_s *sc, struct bio *bp)
 			}
 
 			m->valid = VM_PAGE_BITS_ALL;
-			vm_page_dirty(m);
-			vm_pager_page_unswapped(m);
+			if (m->dirty != VM_PAGE_BITS_ALL) {
+				vm_page_dirty(m);
+				vm_pager_page_unswapped(m);
+			}
 		} else if (bp->bio_cmd == BIO_DELETE) {
 			if (len == PAGE_SIZE || m->valid == VM_PAGE_BITS_ALL)
 				rv = VM_PAGER_OK;
@@ -1082,7 +1084,7 @@ mdstart_swap(struct md_s *sc, struct bio *bp)
 				rv = vm_pager_get_pages(sc->object, &m, 1,
 				    NULL, NULL);
 			if (rv == VM_PAGER_ERROR) {
-				vm_page_xunbusy(m);
+				md_swap_page_free(m);
 				break;
 			} else if (rv == VM_PAGER_FAIL) {
 				md_swap_page_free(m);
@@ -1091,10 +1093,12 @@ mdstart_swap(struct md_s *sc, struct bio *bp)
 				/* Page is valid. */
 				if (len != PAGE_SIZE) {
 					pmap_zero_page_area(m, offs, len);
-					vm_page_dirty(m);
-				}
-				vm_pager_page_unswapped(m);
-				if (len == PAGE_SIZE) {
+					if (m->dirty != VM_PAGE_BITS_ALL) {
+						vm_page_dirty(m);
+						vm_pager_page_unswapped(m);
+					}
+				} else {
+					vm_pager_page_unswapped(m);
 					md_swap_page_free(m);
 					m = NULL;
 				}
@@ -1712,13 +1716,25 @@ xmdctlioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags, struct thread
 			    strlen(sc->file) + 1);
 		return (error);
 	case MDIOCLIST:
+		/*
+		 * Write the number of md devices to mdio->md_pad[0].
+		 * Write the unit number of the first (MDNPAD - 2) units
+		 * to mdio->md_pad[1::(MDNPAD - 2)] and terminate the
+		 * list with -1.
+		 *
+		 * XXX: There is currently no mechanism to retrieve unit
+		 * numbers for more than (MDNPAD - 2) units.
+		 *
+		 * XXX: Due to the use of LIST_INSERT_HEAD in mdnew(), the
+		 * list of visible unit numbers not stable.
+		 */
 		i = 1;
 		LIST_FOREACH(sc, &md_softc_list, list) {
-			if (i == MDNPAD - 1)
-				mdio->md_pad[i] = -1;
-			else
-				mdio->md_pad[i++] = sc->unit;
+			if (i < MDNPAD - 1)
+				mdio->md_pad[i] = sc->unit;
+			i++;
 		}
+		mdio->md_pad[MIN(i, MDNPAD - 1)] = -1;
 		mdio->md_pad[0] = i - 1;
 		return (0);
 	default:
@@ -1751,9 +1767,15 @@ md_preloaded(u_char *image, size_t length, const char *name)
 	sc->pl_ptr = image;
 	sc->pl_len = length;
 	sc->start = mdstart_preload;
-#if defined(MD_ROOT) && !defined(ROOTDEVNAME)
-	if (sc->unit == 0)
+#ifdef MD_ROOT
+	if (sc->unit == 0) {
+#ifndef ROOTDEVNAME
 		rootdevnames[0] = MD_ROOT_FSTYPE ":/dev/md0";
+#endif
+#ifdef MD_ROOT_READONLY
+		sc->flags |= MD_READONLY;
+#endif
+	}
 #endif
 	mdinit(sc);
 	if (name != NULL) {

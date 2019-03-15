@@ -42,6 +42,7 @@ struct ucred;
 
 struct image_args {
 	char *buf;		/* pointer to string buffer */
+	void *bufkva;		/* cookie for string buffer KVA */
 	char *begin_argv;	/* beginning of argv in buf */
 	char *begin_envv;	/* beginning of envv in buf */
 	char *endp;		/* current `end' pointer of arg & env strings */
@@ -86,6 +87,10 @@ struct image_params {
 	u_long stack_sz;
 	struct ucred *newcred;		/* new credentials if changing */
 	bool credential_setid;		/* true if becoming setid */
+	struct _pax {
+		uint32_t req_acl_flags; /* Requested PaX settings from ACL */
+		uint32_t req_extattr_flags; /* Req. PaX setting from extattr */
+	} pax;
 };
 
 #ifdef _KERNEL

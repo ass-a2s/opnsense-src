@@ -27,12 +27,14 @@ FILES=	\
 	bsd.dtb.mk \
 	bsd.endian.mk \
 	bsd.files.mk \
+	bsd.hardenedbsd.mk \
 	bsd.incs.mk \
 	bsd.info.mk \
 	bsd.init.mk \
 	bsd.kmod.mk \
 	bsd.lib.mk \
 	bsd.libnames.mk \
+	bsd.linker.mk \
 	bsd.links.mk \
 	bsd.man.mk \
 	bsd.mkopt.mk \

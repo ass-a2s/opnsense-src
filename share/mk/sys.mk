@@ -50,8 +50,11 @@ MK_META_MODE=	no
 .if ${MK_DIRDEPS_BUILD} == "yes"
 .sinclude <meta.sys.mk>
 .elif ${MK_META_MODE} == "yes"
+META_MODE+=	meta
+.if empty(.MAKEFLAGS:M-s)
 # verbose will show .MAKE.META.PREFIX for each target.
-META_MODE+=	meta verbose
+META_MODE+=	verbose
+.endif
 .if !defined(NO_META_MISSING)
 META_MODE+=	missing-meta=yes
 .endif
@@ -128,14 +131,18 @@ META_MODE?= normal
 .SUFFIXES:	.out .a .ln .o .c .cc .cpp .cxx .C .m .F .f .e .r .y .l .S .asm .s .cl .p .h .sh
 .endif
 
+_TEST_AR=	/usr/bin/ar
 AR		?=	ar
 .if defined(%POSIX)
 ARFLAGS		?=	-rv
+.elif ${_TEST_AR:tA} == "/usr/bin/llvm-ar"
+ARFLAGS		?=	crD
 .else
 ARFLAGS		?=	-crD
 .endif
+_TEST_RANLIB=	/usr/bin/ranlib
 RANLIB		?=	ranlib
-.if !defined(%POSIX)
+.if !defined(%POSIX) && ${_TEST_RANLIB:tA} != "/usr/bin/llvm-ar"
 RANLIBFLAGS	?=	-D
 .endif
 
@@ -444,7 +451,8 @@ SHELL=	${__MAKE_SHELL}
 .MAKE.EXPAND_VARIABLES= yes
 
 # Tell bmake the makefile preference
-.MAKE.MAKEFILE_PREFERENCE= BSDmakefile makefile Makefile
+MAKEFILE_PREFERENCE?= BSDmakefile makefile Makefile
+.MAKE.MAKEFILE_PREFERENCE= ${MAKEFILE_PREFERENCE}
 
 # Tell bmake to always pass job tokens, regardless of target depending on
 # .MAKE or looking like ${MAKE}/${.MAKE}/$(MAKE)/$(.MAKE)/make.
@@ -474,3 +482,5 @@ __MAKE_SHELL?=/bin/sh
 .endif
 
 .endif # ! Posix
+
+.include <bsd.hardenedbsd.mk>

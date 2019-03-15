@@ -48,12 +48,48 @@ __FBSDID("$FreeBSD$");
 static int	hw_instruction_sse;
 SYSCTL_INT(_hw, OID_AUTO, instruction_sse, CTLFLAG_RD,
     &hw_instruction_sse, 0, "SIMD/MMX2 instructions available in CPU");
+static int	lower_sharedpage_init;
+int		hw_lower_amd64_sharedpage;
+SYSCTL_INT(_hw, OID_AUTO, lower_amd64_sharedpage, CTLFLAG_RDTUN,
+    &hw_lower_amd64_sharedpage, 0,
+   "Lower sharedpage to work around Ryzen issue with executing code near the top of user memory");
 /*
  * -1: automatic (default)
  *  0: keep enable CLFLUSH
  *  1: force disable CLFLUSH
  */
 static int	hw_clflush_disable = -1;
+
+/*
+ * -1: SDBG not supported (default)
+ *  0: disabled SDBG
+ *  1: enabled SDBG
+ */
+static int	hw_sdbg_status = -1;
+SYSCTL_INT(_hw, OID_AUTO, intel_sdbg, CTLFLAG_RD,
+    &hw_sdbg_status, 0, "Intel Silicon Debug Interface status");
+
+static void
+init_intel(void)
+{
+	uint64_t msr;
+
+	if (cpu_feature2 & CPUID2_SDBG) {
+		msr = rdmsr(MSR_IA32_DEBUG_INTERFACE);
+		if ((msr & IA32_DEBUG_INTERFACE_EN) != 0 &&
+		    (msr & IA32_DEBUG_INTERFACE_LOCK) == 0) {
+			msr &= IA32_DEBUG_INTERFACE_MASK;
+			msr |= IA32_DEBUG_INTERFACE_LOCK;
+			wrmsr(MSR_IA32_DEBUG_INTERFACE, msr);
+		}
+
+		/*
+		 * Reread the status after applied quirk.
+		 */
+		msr = rdmsr(MSR_IA32_DEBUG_INTERFACE);
+		hw_sdbg_status = (msr & IA32_DEBUG_INTERFACE_EN) ? 1 : 0;
+	}
+}
 
 static void
 init_amd(void)
@@ -120,6 +156,28 @@ init_amd(void)
 			msr = rdmsr(0xc0011020);
 			msr |= (uint64_t)1 << 15;
 			wrmsr(0xc0011020, msr);
+		}
+	}
+
+	/*
+	 * Work around a problem on Ryzen that is triggered by executing
+	 * code near the top of user memory, in our case the signal
+	 * trampoline code in the shared page on amd64.
+	 *
+	 * This function is executed once for the BSP before tunables take
+	 * effect so the value determined here can be overridden by the
+	 * tunable.  This function is then executed again for each AP and
+	 * also on resume.  Set a flag the first time so that value set by
+	 * the tunable is not overwritten.
+	 *
+	 * The stepping and/or microcode versions should be checked after
+	 * this issue is fixed by AMD so that we don't use this mode if not
+	 * needed.
+	 */
+	if (lower_sharedpage_init == 0) {
+		lower_sharedpage_init = 1;
+		if (CPUID_TO_FAMILY(cpu_id) == 0x17) {
+			hw_lower_amd64_sharedpage = 1;
 		}
 	}
 }
@@ -194,7 +252,12 @@ initializecpu(void)
 		wrmsr(MSR_EFER, msr);
 		pg_nx = PG_NX;
 	}
+	hw_ibrs_recalculate();
+	hw_ssb_recalculate(false);
 	switch (cpu_vendor_id) {
+	case CPU_VENDOR_INTEL:
+		init_intel();
+		break;
 	case CPU_VENDOR_AMD:
 		init_amd();
 		break;

@@ -38,7 +38,7 @@ if [ "x$1" = "x-b" ]; then
 	umount efi
 	rmdir efi
 	mdconfig -d -u $device
-	bootable="-o bootimage=i386;efiboot.img -o no-emul-boot $bootable"
+	bootable="$bootable -o bootimage=i386;efiboot.img -o no-emul-boot -o platformid=efi"
 	
 	shift
 else
@@ -53,7 +53,7 @@ fi
 LABEL=`echo "$1" | tr '[:lower:]' '[:upper:]'`; shift
 NAME="$1"; shift
 
-publisher="The FreeBSD Project.  http://www.FreeBSD.org/"
+publisher="The HardenedBSD Project.  http://www.HardenedBSD.org/"
 echo "/dev/iso9660/$LABEL / cd9660 ro 0 0" > "$1/etc/fstab"
 makefs -t cd9660 $bootable -o rockridge -o label="$LABEL" -o publisher="$publisher" "$NAME" "$@"
 rm -f "$1/etc/fstab"

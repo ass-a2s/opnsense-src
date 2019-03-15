@@ -860,17 +860,6 @@ kern_kqueue(struct thread *td, int flags, struct filecaps *fcaps)
 	return (0);
 }
 
-#ifdef KTRACE
-static size_t
-kev_iovlen(int n, u_int kgio)
-{
-
-	if (n < 0 || n >= kgio / sizeof(struct kevent))
-		return (kgio);
-	return (n * sizeof(struct kevent));
-}
-#endif
-
 #ifndef _SYS_SYSPROTO_H_
 struct kevent_args {
 	int	fd;
@@ -890,14 +879,10 @@ sys_kevent(struct thread *td, struct kevent_args *uap)
 		.k_copyout = kevent_copyout,
 		.k_copyin = kevent_copyin,
 	};
-	int error;
 #ifdef KTRACE
-	struct uio ktruio;
-	struct iovec ktriov;
-	struct uio *ktruioin = NULL;
-	struct uio *ktruioout = NULL;
-	u_int kgio;
+	struct kevent *eventlist = uap->eventlist;
 #endif
+	int error;
 
 	if (uap->timeout != NULL) {
 		error = copyin(uap->timeout, &ts, sizeof(ts));
@@ -908,31 +893,18 @@ sys_kevent(struct thread *td, struct kevent_args *uap)
 		tsp = NULL;
 
 #ifdef KTRACE
-	if (KTRPOINT(td, KTR_GENIO)) {
-		kgio = ktr_geniosize;
-		ktriov.iov_base = uap->changelist;
-		ktriov.iov_len = kev_iovlen(uap->nchanges, kgio);
-		ktruio = (struct uio){ .uio_iov = &ktriov, .uio_iovcnt = 1,
-		    .uio_segflg = UIO_USERSPACE, .uio_rw = UIO_READ,
-		    .uio_td = td };
-		ktruioin = cloneuio(&ktruio);
-		ktriov.iov_base = uap->eventlist;
-		ktriov.iov_len = kev_iovlen(uap->nevents, kgio);
-		ktriov.iov_len = uap->nevents * sizeof(struct kevent);
-		ktruioout = cloneuio(&ktruio);
-	}
+	if (KTRPOINT(td, KTR_STRUCT_ARRAY))
+		ktrstructarray("kevent", UIO_USERSPACE, uap->changelist,
+		    uap->nchanges, sizeof(struct kevent));
 #endif
 
 	error = kern_kevent(td, uap->fd, uap->nchanges, uap->nevents,
 	    &k_ops, tsp);
 
 #ifdef KTRACE
-	if (ktruioin != NULL) {
-		ktruioin->uio_resid = kev_iovlen(uap->nchanges, kgio);
-		ktrgenio(uap->fd, UIO_WRITE, ktruioin, 0);
-		ktruioout->uio_resid = kev_iovlen(td->td_retval[0], kgio);
-		ktrgenio(uap->fd, UIO_READ, ktruioout, error);
-	}
+	if (error == 0 && KTRPOINT(td, KTR_STRUCT_ARRAY))
+		ktrstructarray("kevent", UIO_USERSPACE, eventlist,
+		    td->td_retval[0], sizeof(struct kevent));
 #endif
 
 	return (error);
@@ -1324,6 +1296,8 @@ findkn:
 			kn->kn_kevent.flags &= ~(EV_ADD | EV_DELETE |
 			    EV_ENABLE | EV_DISABLE | EV_FORCEONESHOT);
 			kn->kn_status = KN_INFLUX|KN_DETACHED;
+			if ((kev->flags & EV_DISABLE) != 0)
+				kn->kn_status |= KN_DISABLED;
 
 			error = knote_attach(kn, kq);
 			KQ_UNLOCK(kq);
@@ -1360,6 +1334,11 @@ findkn:
 		KNOTE_ACTIVATE(kn, 1);
 	}
 
+	if ((kev->flags & EV_ENABLE) != 0)
+		kn->kn_status &= ~KN_DISABLED;
+	else if ((kev->flags & EV_DISABLE) != 0)
+		kn->kn_status |= KN_DISABLED;
+
 	/*
 	 * The user may change some filter values after the initial EV_ADD,
 	 * but doing so will not reset any filter which has already been
@@ -1376,19 +1355,17 @@ findkn:
 		kn->kn_sdata = kev->data;
 	}
 
+done_ev_add:
 	/*
 	 * We can get here with kn->kn_knlist == NULL.  This can happen when
 	 * the initial attach event decides that the event is "completed" 
-	 * already.  i.e. filt_procattach is called on a zombie process.  It
-	 * will call filt_proc which will remove it from the list, and NULL
+	 * already, e.g., filt_procattach() is called on a zombie process.  It
+	 * will call filt_proc() which will remove it from the list, and NULL
 	 * kn_knlist.
+	 *
+	 * KN_DISABLED will be stable while the knote is in flux, so the
+	 * unlocked read will not race with an update.
 	 */
-done_ev_add:
-	if ((kev->flags & EV_ENABLE) != 0)
-		kn->kn_status &= ~KN_DISABLED;
-	else if ((kev->flags & EV_DISABLE) != 0)
-		kn->kn_status |= KN_DISABLED;
-
 	if ((kn->kn_status & KN_DISABLED) == 0)
 		event = kn->kn_fop->f_event(kn, 0);
 	else

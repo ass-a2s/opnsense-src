@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2011 Nathan Whitehorn
  * All rights reserved.
  *
@@ -27,11 +29,10 @@
  */
 
 #include <sys/param.h>
-#include <errno.h>
-#include <libutil.h>
-#include <inttypes.h>
-
 #include <sys/sysctl.h>
+#include <errno.h>
+#include <inttypes.h>
+#include <libutil.h>
 #include <string.h>
 
 #include <libgeom.h>
@@ -47,11 +48,12 @@ static char *boot_disk(struct gmesh *mesh);
 static char *wizard_partition(struct gmesh *mesh, const char *disk);
 
 int
-part_wizard(const char *fsreq) {
-	int error;
-	struct gmesh mesh;
+part_wizard(const char *fsreq)
+{
 	char *disk, *schemeroot;
 	const char *fstype;
+	struct gmesh mesh;
+	int error;
 
 	if (fsreq != NULL)
 		fstype = fsreq;
@@ -152,7 +154,7 @@ boot_disk(struct gmesh *mesh)
 
 	if (n > 1) {
 		err = dlg_menu("Partitioning",
-		    "Select the disk on which to install FreeBSD.", 0, 0, 0,
+		    "Select the disk on which to install HardenedBSD.", 0, 0, 0,
 		    n, disks, &selected, NULL);
 
 		chosen = (err == 0) ? strdup(disks[selected].name) : NULL;
@@ -199,9 +201,9 @@ wizard_partition(struct gmesh *mesh, const char *disk)
 	struct gclass *classp;
 	struct ggeom *gpart = NULL;
 	struct gconfig *gc;
-	char message[512];
-	const char *scheme = NULL;
 	char *retval = NULL;
+	const char *scheme = NULL;
+	char message[512];
 	int choice;
 
 	LIST_FOREACH(classp, &mesh->lg_class, lg_class)
@@ -234,7 +236,7 @@ query:
 		dialog_vars.defaultno = TRUE;
 
 	snprintf(message, sizeof(message), "Would you like to use this entire "
-	    "disk (%s) for FreeBSD or partition it to share it with other "
+	    "disk (%s) for HardenedBSD or partition it to share it with other "
 	    "operating systems? Using the entire disk will erase any data "
 	    "currently stored there.", disk);
 	choice = dialog_yesno("Partition", message, 0, 0);
@@ -249,7 +251,7 @@ query:
 
 		sprintf(warning, "The existing partition scheme on this "
 		    "disk (%s) is not bootable on this platform. To install "
-		    "FreeBSD, it must be repartitioned. This will destroy all "
+		    "HardenedBSD, it must be repartitioned. This will destroy all "
 		    "data on the disk. Are you sure you want to proceed?",
 		    scheme);
 		subchoice = dialog_yesno("Non-bootable Disk", warning, 0, 0);
@@ -295,15 +297,17 @@ query:
 }
 
 int
-wizard_makeparts(struct gmesh *mesh, const char *disk, const char *fstype, int interactive)
+wizard_makeparts(struct gmesh *mesh, const char *disk, const char *fstype,
+    int interactive)
 {
-	struct gmesh submesh;
 	struct gclass *classp;
 	struct ggeom *gp;
 	struct gprovider *pp;
-	intmax_t swapsize, available;
-	char swapsizestr[10], rootsizestr[10], *fsname;
 	char *fsnames[] = {"freebsd-ufs", "freebsd-zfs"};
+	char *fsname;
+	struct gmesh submesh;
+	char swapsizestr[10], rootsizestr[10];
+	intmax_t swapsize, available;
 	int retval;
 
 	if (strcmp(fstype, "zfs") == 0) {
@@ -331,7 +335,7 @@ wizard_makeparts(struct gmesh *mesh, const char *disk, const char *fstype, int i
 		humanize_number(neededstr, 7, MIN_FREE_SPACE, "B", HN_AUTOSCALE,
 		    HN_DECIMAL);
 		sprintf(message, "There is not enough free space on %s to "
-		    "install FreeBSD (%s free, %s required). Would you like "
+		    "install HardenedBSD (%s free, %s required). Would you like "
 		    "to choose another disk or to open the partition editor?",
 		    disk, availablestr, neededstr);
 
@@ -362,4 +366,3 @@ wizard_makeparts(struct gmesh *mesh, const char *disk, const char *fstype, int i
 
 	return (0);
 }
-

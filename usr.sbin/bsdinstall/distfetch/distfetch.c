@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2011 Nathan Whitehorn
  * Copyright (c) 2014 Devin Teske <dteske@FreeBSD.org>
  * All rights reserved.
@@ -67,7 +69,7 @@ main(void)
 	}
 
 	init_dialog(stdin, stdout);
-	dialog_vars.backtitle = __DECONST(char *, "FreeBSD Installer");
+	dialog_vars.backtitle = __DECONST(char *, "HardenedBSD Installer");
 	dlg_put_backtitle();
 
 	for (i = 0; i < ndists; i++) {
